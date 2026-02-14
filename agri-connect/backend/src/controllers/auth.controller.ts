@@ -31,6 +31,19 @@ export const login = async (req: Request, res: Response) => {
     }
 };
 
+export const refresh = async (req: Request, res: Response) => {
+    try {
+        const { refreshToken } = req.body;
+        if (!refreshToken) {
+            return res.status(400).json({ message: 'Refresh token is required' });
+        }
+        const tokens = await authService.refreshToken(refreshToken);
+        res.json(tokens);
+    } catch (error: any) {
+        res.status(401).json({ message: error.message });
+    }
+};
+
 export const me = (req: Request, res: Response) => {
     // req.user is set by authenticate middleware
     res.json(req.user);

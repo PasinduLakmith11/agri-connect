@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../config/database';
 import { RegisterRequest, LoginRequest, User, AuthResponse } from 'agri-connect-shared';
-import { generateTokens } from '../utils/jwt';
+import { generateTokens, verifyRefreshToken } from '../utils/jwt';
 
 export class AuthService {
     async register(data: RegisterRequest): Promise<AuthResponse> {
@@ -72,5 +72,35 @@ export class AuthService {
         const { accessToken, refreshToken } = generateTokens(userDto);
 
         return { user: userDto, accessToken, refreshToken };
+    }
+
+    async refreshToken(token: string): Promise<{ accessToken: string; refreshToken: string }> {
+        const payload = verifyRefreshToken(token);
+        if (!payload) {
+            throw new Error('Invalid or expired refresh token');
+        }
+
+        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.userId) as any;
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        const userDto: User = {
+            id: user.id,
+            email: user.email,
+            phone: user.phone,
+            role: user.role,
+            full_name: user.full_name,
+            location_lat: user.location_lat,
+            location_lng: user.location_lng,
+            address: user.address,
+            rating: user.rating || 0,
+            rating_count: user.rating_count || 0,
+            verified: Boolean(user.verified),
+            created_at: user.created_at,
+            updated_at: user.updated_at
+        };
+
+        return generateTokens(userDto);
     }
 }
