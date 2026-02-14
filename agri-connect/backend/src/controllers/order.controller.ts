@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service';
 import { CreateOrderSchema } from 'agri-connect-shared';
 import { z } from 'zod';
+import db from '../config/database';
 
 const orderService = new OrderService();
 
@@ -37,10 +38,17 @@ export const updateOrder = async (req: Request, res: Response) => {
 
         if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
 
-        // If buyer, they can only cancel or confirm receipt
-        if (req.user.role === 'buyer') {
-            const order = await orderService.findById(id);
-            if (!order || order.buyer_id !== req.user.userId) {
+        console.log(`Update Order Attempt - User: ${req.user.userId}, Role: ${req.user.role}, Attempting updates:`, updates);
+
+        const user = req.user;
+        const role = user.role.toLowerCase();
+
+        // Fetch order to check ownership
+        const order = await orderService.findById(id);
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+
+        if (role === 'buyer') {
+            if (order.buyer_id !== user.userId) {
                 return res.status(403).json({ message: 'Forbidden' });
             }
 
@@ -58,12 +66,23 @@ export const updateOrder = async (req: Request, res: Response) => {
             if (updates.status === 'completed' && order.status !== 'delivered') {
                 return res.status(400).json({ message: 'Can only confirm receipt for orders that are delivered' });
             }
-        } else if (req.user.role !== 'farmer' && req.user.role !== 'logistics' && req.user.role !== 'admin') {
+        } else if (role === 'farmer') {
+            // Farmers can only update orders for their own products
+            // We need to check product ownership from the database
+            const product = await db.prepare('SELECT farmer_id FROM products WHERE id = ?').get(order.product_id) as any;
+            console.log(`Farmer Ownership Check - User: ${user.userId}, Product Owner: ${product?.farmer_id}`);
+            if (!product || product.farmer_id !== user.userId) {
+                return res.status(403).json({
+                    message: 'Forbidden: You do not own the product in this order',
+                    details: { orderId: id, farmerId: user.userId, productOwnerId: product?.farmer_id }
+                });
+            }
+        } else if (role !== 'logistics' && role !== 'admin') {
             return res.status(403).json({ message: 'Forbidden' });
         }
 
-        const order = await orderService.update(id, updates);
-        res.json(order);
+        const updatedOrder = await orderService.update(id, updates);
+        res.json(updatedOrder);
     } catch (error: any) {
         res.status(500).json({ message: error.message });
     }

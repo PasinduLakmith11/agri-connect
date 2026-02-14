@@ -88,6 +88,13 @@ export class OrderService {
             WHERE p.farmer_id = ? 
             ORDER BY o.created_at DESC
         `).all(userId) as Order[];
+        } else if (role === 'logistics' || role === 'admin') {
+            return db.prepare(`
+            SELECT o.*, p.name as product_name, p.farmer_id 
+            FROM orders o 
+            JOIN products p ON o.product_id = p.id 
+            ORDER BY o.created_at DESC
+        `).all() as Order[];
         }
         return [];
     }

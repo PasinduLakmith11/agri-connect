@@ -15,6 +15,7 @@ interface Point {
         paymentMethod: string;
         paymentStatus: string;
         totalPrice: number;
+        status: string;
     };
 }
 
@@ -54,7 +55,7 @@ export class RouteService {
                 }
             }
 
-            if (pickupLat && pickupLng && order.status !== 'in_transit') {
+            if (pickupLat && pickupLng && order.status !== 'in_transit' && order.status !== 'delivered') {
                 points.push({
                     id: `pickup-${order.id}`,
                     lat: pickupLat,
@@ -69,7 +70,8 @@ export class RouteService {
                         customerPhone: farmerPhone || 'N/A',
                         paymentMethod: order.payment_method,
                         paymentStatus: order.payment_status,
-                        totalPrice: order.total_price
+                        totalPrice: order.total_price,
+                        status: order.status
                     }
                 });
             }
@@ -113,7 +115,8 @@ export class RouteService {
                         customerPhone: buyerPhone || 'N/A',
                         paymentMethod: order.payment_method,
                         paymentStatus: order.payment_status,
-                        totalPrice: order.total_price
+                        totalPrice: order.total_price,
+                        status: order.status
                     }
                 });
             }
@@ -142,8 +145,13 @@ export class RouteService {
                 const point = unvisited[i];
                 let canVisit = true;
                 if (point.type === 'delivery') {
-                    const pickupVisited = route.some(p => p.type === 'pickup' && p.orderId === point.orderId);
-                    if (!pickupVisited) canVisit = false;
+                    const pickupVisitedInRoute = route.some(p => p.type === 'pickup' && p.orderId === point.orderId);
+                    const order = orders.find(o => o.id === point.orderId);
+                    const isAlreadyInTransit = order?.status === 'in_transit';
+
+                    if (!pickupVisitedInRoute && !isAlreadyInTransit) {
+                        canVisit = false;
+                    }
                 }
 
                 if (canVisit && dist < minDist) {
