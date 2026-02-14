@@ -1,0 +1,67 @@
+﻿PRAGMA journal_mode = WAL
+CREATE TABLE IF NOT EXISTS migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+SELECT name FROM migrations
+Running migration: 002_add_farm_name.sql
+BEGIN
+ROLLBACK
+node.exe : Migration 
+002_add_farm_name.sql 
+failed: SqliteError: 
+duplicate column name: 
+farm_name
+At 
+C:\nvm4w\nodejs\npx.ps1:29 
+char:3
++   & $NODE_EXE $NPX_CLI_JS 
+$args
++   ~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo          
+    : NotSpecified: (Migra  
+  tion 002_a...name: farm   
+ _name:String) [], Remot    
+eException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+    at Database.exec (D:\agr
+i\agri-connect\backend\node_
+modules\better-sqlite3\lib\m
+ethods\wrappers.js:9:14)
+    at D:\agri\agri-connect\
+backend\src\scripts\migrate.
+ts:28:20
+    at sqliteTransaction (D:
+\agri\agri-connect\backend\n
+ode_modules\better-sqlite3\l
+ib\methods\transaction.js:65
+:24)
+    at migrate (D:\agri\agri
+-connect\backend\src\scripts
+\migrate.ts:33:17)
+    at Object.<anonymous> (D
+:\agri\agri-connect\backend\
+src\scripts\migrate.ts:45:1)
+    at Module._compile (node
+:internal/modules/cjs/loader
+:1554:14)
+    at Module.m._compile (D:
+\agri\agri-connect\backend\n
+ode_modules\ts-node\src\inde
+x.ts:1618:23)
+    at node:internal/modules
+/cjs/loader:1706:10
+    at Object.require.extens
+ions.<computed> [as .ts] (D:
+\agri\agri-connect\backend\n
+ode_modules\ts-node\src\inde
+x.ts:1621:12)
+    at Module.load (node:int
+ernal/modules/cjs/loader:128
+9:32) {
+  code: 'SQLITE_ERROR'
+}
