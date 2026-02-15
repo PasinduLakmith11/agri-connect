@@ -11,10 +11,25 @@ export const register = async (req: Request, res: Response) => {
         const result = await authService.register(data);
         res.status(201).json(result);
     } catch (error: any) {
+        // Log detailed error information
+        console.error('❌ Registration Error:');
+        console.error('   Message:', error.message);
+        console.error('   Name:', error.name);
+        console.error('   Code:', error.code);
+        if (error.stack) {
+            console.error('   Stack:', error.stack);
+        }
+
         if (error instanceof z.ZodError) {
             return res.status(400).json({ message: 'Validation error', errors: (error as z.ZodError).errors });
         }
-        res.status(400).json({ message: error.message });
+
+        // Send detailed error to client for debugging
+        res.status(400).json({
+            message: error.message,
+            error: error.name,
+            code: error.code
+        });
     }
 };
 

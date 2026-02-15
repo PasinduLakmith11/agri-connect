@@ -1,136 +1,230 @@
 import { v4 as uuidv4 } from 'uuid';
-import db from '../config/database';
+import { db } from '../database';
+import { products, users } from '../database/schema';
+import { eq, and, like, or, desc } from 'drizzle-orm';
 import { Product, CreateProductRequest } from 'agri-connect-shared';
 
 export class ProductService {
     async create(data: CreateProductRequest, farmerId: string, imagePaths: string[]): Promise<Product> {
+        if (!db) throw new Error('Database not initialized');
         const id = uuidv4();
         const imagesJson = JSON.stringify(imagePaths);
 
-        const insert = db.prepare(`
-      INSERT INTO products (
-        id, farmer_id, name, category, quantity, unit, base_price, current_price,
-        harvest_date, expiry_date, location_lat, location_lng, images, description, status,
-        created_at, updated_at
-      )
-      VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, 'available',
-        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-      )
-    `);
+        await db.insert(products).values({
+            id,
+            farmerId,
+            name: data.name,
+            category: data.category || null,
+            quantity: data.quantity,
+            unit: data.unit,
+            basePrice: data.base_price,
+            currentPrice: data.base_price,
+            harvestDate: data.harvest_date || null,
+            expiryDate: data.expiry_date || null,
+            locationLat: data.location_lat || null,
+            locationLng: data.location_lng || null,
+            address: data.address || null,
+            images: imagesJson,
+            description: data.description || null,
+            status: 'available',
+        });
 
-        insert.run(
-            id, farmerId, data.name, data.category || null, data.quantity, data.unit, data.base_price, data.base_price, // current_price starts as base_price
-            data.harvest_date || null, data.expiry_date || null, data.location_lat || null, data.location_lng || null,
-            imagesJson, data.description || null
-        );
-
-        return (await this.findById(id)) as unknown as Product;
+        return (await this.findById(id)) as Product;
     }
 
     async findAll(filters: any = {}): Promise<Product[]> {
-        let query = `
-            SELECT p.*, u.full_name as farmer_name 
-            FROM products p 
-            LEFT JOIN users u ON p.farmer_id = u.id 
-            WHERE p.is_deleted = 0
-        `;
-        const params: any[] = [];
+        if (!db) throw new Error('Database not initialized');
+
+        let query = db.select({
+            id: products.id,
+            farmerId: products.farmerId,
+            name: products.name,
+            category: products.category,
+            quantity: products.quantity,
+            unit: products.unit,
+            basePrice: products.basePrice,
+            currentPrice: products.currentPrice,
+            harvestDate: products.harvestDate,
+            expiryDate: products.expiryDate,
+            locationLat: products.locationLat,
+            locationLng: products.locationLng,
+            address: products.address,
+            images: products.images,
+            description: products.description,
+            status: products.status,
+            createdAt: products.createdAt,
+            updatedAt: products.updatedAt,
+            farmerName: users.fullName,
+        })
+            .from(products)
+            .leftJoin(users, eq(products.farmerId, users.id));
+
+        const conditions = [eq(products.isDeleted, 0)];
 
         if (filters.category) {
-            query += ' AND p.category = ?';
-            params.push(filters.category);
+            conditions.push(eq(products.category, filters.category));
         }
 
         if (filters.farmer_id) {
-            query += ' AND p.farmer_id = ?';
-            params.push(filters.farmer_id);
+            conditions.push(eq(products.farmerId, filters.farmer_id));
         }
 
         if (filters.status) {
-            query += ' AND p.status = ?';
-            params.push(filters.status);
+            conditions.push(eq(products.status, filters.status));
         }
 
-        // Simple search
         if (filters.search) {
-            query += ' AND (p.name LIKE ? OR p.description LIKE ?)';
-            params.push(`%${filters.search}%`, `%${filters.search}%`);
+            conditions.push(
+                or(
+                    like(products.name, `%${filters.search}%`),
+                    like(products.description, `%${filters.search}%`)
+                )!
+            );
         }
 
-        query += ' ORDER BY p.created_at DESC';
+        const results = await query
+            .where(and(...conditions))
+            .orderBy(desc(products.createdAt));
 
-        const products = db.prepare(query).all(...params) as any[];
-        return products.map(p => ({
-            ...p,
+        return results.map(p => ({
+            id: p.id,
+            farmer_id: p.farmerId,
+            name: p.name,
+            category: p.category,
+            quantity: p.quantity,
+            unit: p.unit,
+            base_price: p.basePrice,
+            current_price: p.currentPrice,
+            harvest_date: p.harvestDate,
+            expiry_date: p.expiryDate,
+            location_lat: p.locationLat,
+            location_lng: p.locationLng,
+            address: p.address,
             images: JSON.parse(p.images || '[]'),
-            verified: Boolean(p.verified)
+            description: p.description,
+            status: p.status as any,
+            is_deleted: 0,
+            created_at: p.createdAt?.toISOString() || '',
+            updated_at: p.updatedAt?.toISOString() || '',
+            farmer_name: p.farmerName
         })) as Product[];
     }
 
     async findById(id: string): Promise<Product | undefined> {
-        const product = db.prepare(`
-            SELECT p.*, u.full_name as farmer_name 
-            FROM products p 
-            LEFT JOIN users u ON p.farmer_id = u.id 
-            WHERE p.id = ? AND p.is_deleted = 0
-        `).get(id) as any;
+        if (!db) throw new Error('Database not initialized');
 
-        if (!product) return undefined;
+        const result = await db.select({
+            id: products.id,
+            farmerId: products.farmerId,
+            name: products.name,
+            category: products.category,
+            quantity: products.quantity,
+            unit: products.unit,
+            basePrice: products.basePrice,
+            currentPrice: products.currentPrice,
+            harvestDate: products.harvestDate,
+            expiryDate: products.expiryDate,
+            locationLat: products.locationLat,
+            locationLng: products.locationLng,
+            address: products.address,
+            images: products.images,
+            description: products.description,
+            status: products.status,
+            createdAt: products.createdAt,
+            updatedAt: products.updatedAt,
+            farmerName: users.fullName,
+        })
+            .from(products)
+            .leftJoin(users, eq(products.farmerId, users.id))
+            .where(and(eq(products.id, id), eq(products.isDeleted, 0)))
+            .limit(1);
+
+        const p = result[0];
+        if (!p) return undefined;
 
         return {
-            ...product,
-            images: JSON.parse(product.images || '[]')
+            id: p.id,
+            farmer_id: p.farmerId,
+            name: p.name,
+            category: p.category,
+            quantity: p.quantity,
+            unit: p.unit,
+            base_price: p.basePrice,
+            current_price: p.currentPrice,
+            harvest_date: p.harvestDate,
+            expiry_date: p.expiryDate,
+            location_lat: p.locationLat,
+            location_lng: p.locationLng,
+            address: p.address,
+            images: JSON.parse(p.images || '[]'),
+            description: p.description,
+            status: p.status as any,
+            is_deleted: 0,
+            created_at: p.createdAt?.toISOString() || '',
+            updated_at: p.updatedAt?.toISOString() || '',
+            farmer_name: p.farmerName
         } as Product;
     }
 
     async update(id: string, data: Partial<CreateProductRequest>, userId: string): Promise<Product> {
+        if (!db) throw new Error('Database not initialized');
+
         // Verify ownership
         const product = await this.findById(id);
         if (!product) throw new Error('Product not found or deleted');
         if (product.farmer_id !== userId) throw new Error('Unauthorized');
 
-        // Build update query dynamically
-        const updates: string[] = [];
-        const params: any[] = [];
+        const updates: any = {};
+        if (data.name) updates.name = data.name;
+        if (data.category) updates.category = data.category;
+        if (data.quantity !== undefined) updates.quantity = data.quantity;
+        if (data.unit) updates.unit = data.unit;
+        if (data.base_price !== undefined) {
+            updates.basePrice = data.base_price;
+            updates.currentPrice = data.base_price;
+        }
+        if (data.harvest_date) updates.harvestDate = data.harvest_date;
+        if (data.expiry_date) updates.expiryDate = data.expiry_date;
+        if (data.location_lat) updates.locationLat = data.location_lat;
+        if (data.location_lng) updates.locationLng = data.location_lng;
+        if (data.description) updates.description = data.description;
 
-        Object.keys(data).forEach(key => {
-            if (data[key as keyof CreateProductRequest] !== undefined) {
-                updates.push(`${key} = ?`);
-                params.push(data[key as keyof CreateProductRequest]);
-            }
-        });
+        updates.updatedAt = new Date();
 
-        updates.push('updated_at = CURRENT_TIMESTAMP');
+        await db.update(products)
+            .set(updates)
+            .where(and(eq(products.id, id), eq(products.isDeleted, 0)));
 
-        const updateQuery = `UPDATE products SET ${updates.join(', ')} WHERE id = ? AND is_deleted = 0`;
-        params.push(id);
-
-        db.prepare(updateQuery).run(...params);
-
-        return (await this.findById(id)) as unknown as Product;
+        return (await this.findById(id)) as Product;
     }
 
     async updatePrice(id: string, basePrice: number, currentPrice: number, userId: string): Promise<Product> {
+        if (!db) throw new Error('Database not initialized');
+
         const product = await this.findById(id);
         if (!product) throw new Error('Product not found or deleted');
         if (product.farmer_id !== userId) throw new Error('Unauthorized');
 
-        db.prepare(`
-            UPDATE products 
-            SET base_price = ?, current_price = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = ? AND is_deleted = 0
-        `).run(basePrice, currentPrice, id);
+        await db.update(products)
+            .set({
+                basePrice,
+                currentPrice,
+                updatedAt: new Date()
+            })
+            .where(and(eq(products.id, id), eq(products.isDeleted, 0)));
 
-        return (await this.findById(id)) as unknown as Product;
+        return (await this.findById(id)) as Product;
     }
 
     async delete(id: string, userId: string): Promise<void> {
+        if (!db) throw new Error('Database not initialized');
+
         const product = await this.findById(id);
         if (!product) throw new Error('Product not found or already deleted');
         if (product.farmer_id !== userId) throw new Error('Unauthorized');
 
-        db.prepare('UPDATE products SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+        await db.update(products)
+            .set({ isDeleted: 1, updatedAt: new Date() })
+            .where(eq(products.id, id));
     }
 }

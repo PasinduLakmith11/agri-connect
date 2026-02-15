@@ -38,5 +38,6 @@ export const CreateProductSchema = z.object({
     description: z.string().optional(),
     location_lat: z.number().optional(),
     location_lng: z.number().optional(),
+    address: z.string().optional(),
 });
 export type CreateProductRequest = z.infer<typeof CreateProductSchema>;

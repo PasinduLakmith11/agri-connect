@@ -2,7 +2,9 @@ import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service';
 import { CreateOrderSchema } from 'agri-connect-shared';
 import { z } from 'zod';
-import db from '../config/database';
+import { db } from '../database';
+import { products } from '../database/schema';
+import { eq } from 'drizzle-orm';
 
 const orderService = new OrderService();
 
@@ -68,13 +70,18 @@ export const updateOrder = async (req: Request, res: Response) => {
             }
         } else if (role === 'farmer') {
             // Farmers can only update orders for their own products
-            // We need to check product ownership from the database
-            const product = await db.prepare('SELECT farmer_id FROM products WHERE id = ?').get(order.product_id) as any;
-            console.log(`Farmer Ownership Check - User: ${user.userId}, Product Owner: ${product?.farmer_id}`);
-            if (!product || product.farmer_id !== user.userId) {
+            if (!db) return res.status(500).json({ message: 'Database not initialized' });
+            const productResult = await db.select({ farmerId: products.farmerId })
+                .from(products)
+                .where(eq(products.id, order.product_id))
+                .limit(1);
+
+            const product = productResult[0];
+            console.log(`Farmer Ownership Check - User: ${user.userId}, Product Owner: ${product?.farmerId}`);
+            if (!product || product.farmerId !== user.userId) {
                 return res.status(403).json({
                     message: 'Forbidden: You do not own the product in this order',
-                    details: { orderId: id, farmerId: user.userId, productOwnerId: product?.farmer_id }
+                    details: { orderId: id, farmerId: user.userId, productOwnerId: product?.farmerId }
                 });
             }
         } else if (role !== 'logistics' && role !== 'admin') {

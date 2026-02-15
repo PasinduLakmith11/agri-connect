@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
-import db from '../config/database';
+import { db } from '../database';
+import { orders, products, users } from '../database/schema';
+import { eq, and, desc, sql, aliasedTable } from 'drizzle-orm';
 import { CreateOrderRequest, Order } from 'agri-connect-shared';
 import { NotificationService } from './notification.service';
 
@@ -7,140 +9,229 @@ const notificationService = new NotificationService();
 
 export class OrderService {
     async create(data: CreateOrderRequest, buyerId: string): Promise<Order> {
+        if (!db) throw new Error('Database not initialized');
         const id = uuidv4();
 
-        // Get product to check availability and price
-        const product = db.prepare('SELECT * FROM products WHERE id = ?').get(data.product_id) as any;
-        if (!product) throw new Error('Product not found');
-        if (product.quantity < data.quantity) throw new Error('Insufficient quantity');
+        // Use a transaction
+        return await db.transaction(async (tx) => {
+            // Get product to check availability and price
+            const productRecord = (await tx.select().from(products).where(eq(products.id, data.product_id)).limit(1))[0];
 
-        const unitPrice = product.current_price;
-        const totalPrice = unitPrice * data.quantity;
+            if (!productRecord) throw new Error('Product not found');
+            if (productRecord.quantity < data.quantity) throw new Error('Insufficient quantity');
 
-        // Simulate payment status
-        const paymentStatus = (data.payment_method === 'card' || data.payment_method === 'bank_transfer') ? 'paid' : 'pending';
+            const unitPrice = productRecord.currentPrice;
+            const totalPrice = unitPrice * data.quantity;
 
-        // Start transaction
-        const createOrder = db.transaction(() => {
-            console.log('Inserting order record:', id);
+            // Simulate payment status
+            const paymentStatus = (data.payment_method === 'card' || data.payment_method === 'bank_transfer') ? 'paid' : 'pending';
+
             // Create order
-            db.prepare(`
-            INSERT INTO orders (
-                id, product_id, buyer_id, quantity, unit_price, total_price, status,
-                payment_method, payment_status,
-                delivery_address, delivery_lat, delivery_lng, created_at, updated_at
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, 'pending',
-                ?, ?,
-                ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-            )
-        `).run(
-                id, data.product_id, buyerId, data.quantity, unitPrice, totalPrice,
-                data.payment_method, paymentStatus,
-                data.delivery_address, data.delivery_lat || null, data.delivery_lng || null
-            );
+            await tx.insert(orders).values({
+                id,
+                productId: data.product_id,
+                buyerId,
+                quantity: data.quantity,
+                unitPrice,
+                totalPrice,
+                status: 'pending',
+                paymentMethod: data.payment_method,
+                paymentStatus,
+                deliveryAddress: data.delivery_address,
+                deliveryLat: data.delivery_lat || null,
+                deliveryLng: data.delivery_lng || null,
+            });
 
-            console.log('Updating product quantity for:', data.product_id);
             // Update product quantity
-            db.prepare('UPDATE products SET quantity = quantity - ? WHERE id = ?').run(data.quantity, data.product_id);
-        });
+            await tx.update(products)
+                .set({ quantity: sql`${products.quantity} - ${data.quantity}` })
+                .where(eq(products.id, data.product_id));
 
-        try {
-            createOrder();
-            console.log('Order transaction committed successfully');
-
-            // Notify Farmer
-            if (product && product.farmer_id) {
+            // Notify Farmer (after transaction)
+            if (productRecord && productRecord.farmerId) {
                 notificationService.create({
-                    user_id: product.farmer_id,
+                    user_id: productRecord.farmerId,
                     title: 'New Order Received! 🚜',
-                    message: `You have a new order for ${product.name}. Please confirm it.`,
+                    message: `You have a new order for ${productRecord.name}. Please confirm it.`,
                     type: 'new_order',
                     related_id: id
                 }).catch(err => console.error('Failed to create notification:', err));
             }
-        } catch (error) {
-            console.error('Order transaction failed:', error);
-            throw error;
-        }
 
-        return (await this.findById(id)) as Order;
+            const createdOrder = (await tx.select().from(orders).where(eq(orders.id, id)).limit(1))[0];
+            return {
+                id: createdOrder.id,
+                product_id: createdOrder.productId,
+                buyer_id: createdOrder.buyerId,
+                quantity: createdOrder.quantity,
+                unit_price: createdOrder.unitPrice,
+                total_price: createdOrder.totalPrice,
+                status: createdOrder.status as any,
+                payment_method: createdOrder.paymentMethod || 'cod',
+                payment_status: createdOrder.paymentStatus || 'pending',
+                delivery_address: createdOrder.deliveryAddress || '',
+                delivery_lat: createdOrder.deliveryLat || 0,
+                delivery_lng: createdOrder.deliveryLng || 0,
+                created_at: createdOrder.createdAt?.toISOString() || '',
+                updated_at: createdOrder.updatedAt?.toISOString() || ''
+            } as Order;
+        });
     }
 
     async findById(id: string): Promise<Order | undefined> {
-        return db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Order;
+        if (!db) throw new Error('Database not initialized');
+        const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+        const o = result[0];
+        if (!o) return undefined;
+
+        return {
+            id: o.id,
+            product_id: o.productId,
+            buyer_id: o.buyerId,
+            quantity: o.quantity,
+            unit_price: o.unitPrice,
+            total_price: o.totalPrice,
+            status: o.status as any,
+            payment_method: o.paymentMethod || 'cod',
+            payment_status: o.paymentStatus || 'pending',
+            delivery_address: o.deliveryAddress || '',
+            delivery_lat: o.deliveryLat || 0,
+            delivery_lng: o.deliveryLng || 0,
+            created_at: o.createdAt?.toISOString() || '',
+            updated_at: o.updatedAt?.toISOString() || ''
+        } as Order;
     }
 
     async findByUser(userId: string, role: string): Promise<Order[]> {
+        if (!db) throw new Error('Database not initialized');
+
+        // Aliases for the users table to distinguish between buyer and farmer
+        const buyers = aliasedTable(users, 'buyers');
+        const farmers = aliasedTable(users, 'farmers');
+
+        let query = db.select({
+            id: orders.id,
+            productId: orders.productId,
+            buyerId: orders.buyerId,
+            quantity: orders.quantity,
+            unitPrice: orders.unitPrice,
+            totalPrice: orders.totalPrice,
+            status: orders.status,
+            paymentMethod: orders.paymentMethod,
+            paymentStatus: orders.paymentStatus,
+            deliveryAddress: orders.deliveryAddress,
+            deliveryLat: orders.deliveryLat,
+            deliveryLng: orders.deliveryLng,
+            deliveryDate: orders.deliveryDate,
+            createdAt: orders.createdAt,
+            updatedAt: orders.updatedAt,
+            productName: products.name,
+            farmerId: products.farmerId,
+            // Buyer Details
+            buyerName: buyers.fullName,
+            buyerPhone: buyers.phone,
+            buyerLat: buyers.locationLat,
+            buyerLng: buyers.locationLng,
+            // Farmer Details
+            farmerName: farmers.fullName,
+            farmName: farmers.farmName,
+            farmerPhone: farmers.phone,
+            farmerAddress: farmers.address,
+            farmerLat: farmers.locationLat,
+            farmerLng: farmers.locationLng
+        })
+            .from(orders)
+            .innerJoin(products, eq(orders.productId, products.id))
+            .innerJoin(farmers, eq(products.farmerId, farmers.id))
+            .innerJoin(buyers, eq(orders.buyerId, buyers.id));
+
+        let results;
         if (role === 'buyer') {
-            return db.prepare(`
-            SELECT o.*, p.name as product_name, p.farmer_id 
-            FROM orders o 
-            JOIN products p ON o.product_id = p.id 
-            WHERE o.buyer_id = ? 
-            ORDER BY o.created_at DESC
-        `).all(userId) as Order[];
+            results = await query.where(eq(orders.buyerId, userId)).orderBy(desc(orders.createdAt));
         } else if (role === 'farmer') {
-            return db.prepare(`
-            SELECT o.*, p.name as product_name, p.farmer_id 
-            FROM orders o 
-            JOIN products p ON o.product_id = p.id 
-            WHERE p.farmer_id = ? 
-            ORDER BY o.created_at DESC
-        `).all(userId) as Order[];
-        } else if (role === 'logistics' || role === 'admin') {
-            return db.prepare(`
-            SELECT o.*, p.name as product_name, p.farmer_id 
-            FROM orders o 
-            JOIN products p ON o.product_id = p.id 
-            ORDER BY o.created_at DESC
-        `).all() as Order[];
+            results = await query.where(eq(products.farmerId, userId)).orderBy(desc(orders.createdAt));
+        } else {
+            // Logistics/Admin see all
+            results = await query.orderBy(desc(orders.createdAt));
         }
-        return [];
+
+        return results.map(o => ({
+            id: o.id,
+            product_id: o.productId,
+            buyer_id: o.buyerId,
+            quantity: o.quantity,
+            unit_price: o.unitPrice,
+            total_price: o.totalPrice,
+            status: o.status as any,
+            payment_method: o.paymentMethod || 'cod',
+            payment_status: o.paymentStatus || 'pending',
+            delivery_address: o.deliveryAddress || '',
+            delivery_lat: o.deliveryLat || o.buyerLat || 0,
+            delivery_lng: o.deliveryLng || o.buyerLng || 0,
+            created_at: o.createdAt?.toISOString() || '',
+            updated_at: o.updatedAt?.toISOString() || '',
+            product_name: o.productName,
+            farmer_id: o.farmerId,
+            // Extended details for logistics
+            buyer_name: o.buyerName,
+            buyer_phone: o.buyerPhone,
+            farmer_name: o.farmName || o.farmerName,
+            farmer_phone: o.farmerPhone,
+            farmer_address: o.farmerAddress,
+            farmer_lat: o.farmerLat || 0,
+            farmer_lng: o.farmerLng || 0
+        })) as any[]; // Cast to any to support extended fields
     }
 
     async update(id: string, updates: Partial<Order>): Promise<Order> {
-        const fields = Object.keys(updates).filter(key => ['status', 'payment_status'].includes(key));
-        if (fields.length === 0) return (await this.findById(id)) as Order;
+        if (!db) throw new Error('Database not initialized');
 
-        const setClause = fields.map(field => `${field} = ?`).join(', ');
-        const values = fields.map(field => (updates as any)[field]);
+        return await db.transaction(async (tx) => {
+            const currentOrder = (await tx.select().from(orders).where(eq(orders.id, id)).limit(1))[0];
+            if (!currentOrder) throw new Error('Order not found');
 
-        // Start transaction for status updates that need side effects (like cancellation)
-        const updateTransaction = db.transaction(() => {
             // If cancelling, restore quantity
-            if (updates.status === 'cancelled') {
-                const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Order;
-                if (order && order.status !== 'cancelled') {
-                    db.prepare('UPDATE products SET quantity = quantity + ? WHERE id = ?').run(order.quantity, order.product_id);
-                }
+            if (updates.status === 'cancelled' && currentOrder.status !== 'cancelled') {
+                await tx.update(products)
+                    .set({ quantity: sql`${products.quantity} + ${currentOrder.quantity}` })
+                    .where(eq(products.id, currentOrder.productId));
             }
 
-            db.prepare(`UPDATE orders SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values, id);
+            const dbUpdates: any = { updatedAt: new Date() };
+            if (updates.status) dbUpdates.status = updates.status;
+            if (updates.payment_status) dbUpdates.paymentStatus = updates.payment_status;
+
+            await tx.update(orders).set(dbUpdates).where(eq(orders.id, id));
 
             // Fetch and notify buyer for status changes
             if (updates.status) {
-                const order = db.prepare('SELECT o.*, p.name as product_name FROM orders o JOIN products p ON o.product_id = p.id WHERE o.id = ?').get(id) as any;
-                if (order) {
+                const orderWithProduct = (await tx.select({
+                    id: orders.id,
+                    buyerId: orders.buyerId,
+                    productName: products.name
+                })
+                    .from(orders)
+                    .innerJoin(products, eq(orders.productId, products.id))
+                    .where(eq(orders.id, id))
+                    .limit(1))[0];
+
+                if (orderWithProduct) {
                     let title = 'Order Update! 📦';
-                    let message = `Your order for ${order.product_name} is now ${updates.status.replace('_', ' ')}.`;
+                    let message = `Your order for ${orderWithProduct.productName} is now ${updates.status.replace('_', ' ')}.`;
 
                     if (updates.status === 'confirmed') {
                         title = 'Order Accepted! ✅';
-                        message = `The farmer has accepted your order for ${order.product_name}. Ready for logistics!`;
+                        message = `The farmer has accepted your order for ${orderWithProduct.productName}. Ready for logistics!`;
                     } else if (updates.status === 'in_transit') {
                         title = 'On the Way! 🚚';
-                        message = `Your order for ${order.product_name} has been picked up and is in transit.`;
+                        message = `Your order for ${orderWithProduct.productName} has been picked up and is in transit.`;
                     } else if (updates.status === 'delivered') {
                         title = 'Success! 🥳';
-                        message = `Your order for ${order.product_name} has been delivered. Enjoy!`;
-                    } else if ((updates.status as any) === 'completed') {
-                        title = 'Mission Accomplished! 🏁';
-                        message = `The buyer has confirmed receipt of ${order.product_name}. Trip finalized.`;
+                        message = `Your order for ${orderWithProduct.productName} has been delivered. Enjoy!`;
                     }
 
                     notificationService.create({
-                        user_id: order.buyer_id,
+                        user_id: orderWithProduct.buyerId,
                         title,
                         message,
                         type: 'order_status',
@@ -148,10 +239,8 @@ export class OrderService {
                     }).catch(err => console.error('Failed to notify buyer:', err));
                 }
             }
+
+            return (await this.findById(id)) as Order;
         });
-
-        updateTransaction();
-
-        return (await this.findById(id)) as Order;
     }
 }

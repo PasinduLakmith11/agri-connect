@@ -1,4 +1,6 @@
-import db from '../config/database';
+import { db } from '../database';
+import { orders, products, users } from '../database/schema';
+import { eq, inArray, and } from 'drizzle-orm';
 
 interface Point {
     id: string;
@@ -22,36 +24,43 @@ interface Point {
 export class RouteService {
     // Nearest Neighbor Algorithm for TSP
     async optimizeRoute(driverId: string): Promise<Point[]> {
-        // Get all pending, confirmed, and in-transit orders
-        const orders = db.prepare("SELECT * FROM orders WHERE status IN ('pending', 'confirmed', 'in_transit', 'delivered')").all() as any[];
+        if (!db) throw new Error('Database not initialized');
 
-        // Collect all points (Pickups -> Farmer locations, Deliveries -> Buyer locations)
+        // Get all pending, confirmed, and in-transit orders
+        const orderRecords = await db.select()
+            .from(orders)
+            .where(inArray(orders.status, ['pending', 'confirmed', 'in_transit', 'delivered']));
+
         const points: Point[] = [];
 
-        for (const order of orders) {
-            // Get product location (Farmer)
-            const product = db.prepare('SELECT * FROM products WHERE id = ?').get(order.product_id) as any;
+        for (const order of orderRecords) {
+            // Get product and farmer details
+            const productResult = await db.select({
+                product: products,
+                farmer: users
+            })
+                .from(products)
+                .leftJoin(users, eq(products.farmerId, users.id))
+                .where(eq(products.id, order.productId))
+                .limit(1);
+
+            const { product, farmer } = productResult[0] || {};
 
             let pickupLat, pickupLng, pickupAddress, farmerName, farmerPhone;
 
-            if (product && product.location_lat && product.location_lng) {
-                pickupLat = product.location_lat;
-                pickupLng = product.location_lng;
+            if (product && product.locationLat && product.locationLng) {
+                pickupLat = product.locationLat;
+                pickupLng = product.locationLng;
                 pickupAddress = product.address || 'Farmer Product Location';
             }
 
-            // Always fetch farmer details for contact info
-            if (product && product.farmer_id) {
-                const farmer = db.prepare('SELECT * FROM users WHERE id = ?').get(product.farmer_id) as any;
-                if (farmer) {
-                    farmerName = farmer.full_name || farmer.farm_name;
-                    farmerPhone = farmer.phone;
-                    // Fallback location if needed
-                    if (!pickupLat || !pickupLng) {
-                        pickupLat = farmer.location_lat;
-                        pickupLng = farmer.location_lng;
-                        pickupAddress = farmer.farm_name || farmer.address || 'Farmer Profile Location';
-                    }
+            if (farmer) {
+                farmerName = farmer.fullName;
+                farmerPhone = farmer.phone;
+                if (!pickupLat || !pickupLng) {
+                    pickupLat = farmer.locationLat;
+                    pickupLng = farmer.locationLng;
+                    pickupAddress = farmer.address || 'Farmer Profile Location';
                 }
             }
 
@@ -60,7 +69,7 @@ export class RouteService {
                     id: `pickup-${order.id}`,
                     lat: pickupLat,
                     lng: pickupLng,
-                    address: pickupAddress,
+                    address: pickupAddress!,
                     type: 'pickup',
                     orderId: order.id,
                     details: {
@@ -68,10 +77,10 @@ export class RouteService {
                         quantity: order.quantity,
                         customerName: farmerName || 'Farmer',
                         customerPhone: farmerPhone || 'N/A',
-                        paymentMethod: order.payment_method,
-                        paymentStatus: order.payment_status,
-                        totalPrice: order.total_price,
-                        status: order.status
+                        paymentMethod: order.paymentMethod || 'cod',
+                        paymentStatus: order.paymentStatus || 'pending',
+                        totalPrice: order.totalPrice,
+                        status: order.status as string
                     }
                 });
             }
@@ -79,22 +88,20 @@ export class RouteService {
             // Get delivery location (Buyer)
             let deliveryLat, deliveryLng, deliveryAddress, buyerName, buyerPhone;
 
-            if (order.delivery_lat && order.delivery_lng) {
-                deliveryLat = order.delivery_lat;
-                deliveryLng = order.delivery_lng;
-                deliveryAddress = order.delivery_address;
+            if (order.deliveryLat && order.deliveryLng) {
+                deliveryLat = order.deliveryLat;
+                deliveryLng = order.deliveryLng;
+                deliveryAddress = order.deliveryAddress;
             }
 
-            if (order.buyer_id) {
-                // Fetch Buyer User Profile
-                const buyer = db.prepare('SELECT * FROM users WHERE id = ?').get(order.buyer_id) as any;
+            if (order.buyerId) {
+                const buyer = (await db.select().from(users).where(eq(users.id, order.buyerId)).limit(1))[0];
                 if (buyer) {
-                    buyerName = buyer.full_name;
+                    buyerName = buyer.fullName;
                     buyerPhone = buyer.phone;
-                    // Fallback location
                     if (!deliveryLat || !deliveryLng) {
-                        deliveryLat = buyer.location_lat;
-                        deliveryLng = buyer.location_lng;
+                        deliveryLat = buyer.locationLat;
+                        deliveryLng = buyer.locationLng;
                         deliveryAddress = buyer.address || 'Buyer Profile Location';
                     }
                 }
@@ -105,7 +112,7 @@ export class RouteService {
                     id: `delivery-${order.id}`,
                     lat: deliveryLat,
                     lng: deliveryLng,
-                    address: deliveryAddress,
+                    address: deliveryAddress!,
                     type: 'delivery',
                     orderId: order.id,
                     details: {
@@ -113,10 +120,10 @@ export class RouteService {
                         quantity: order.quantity,
                         customerName: buyerName || 'Buyer',
                         customerPhone: buyerPhone || 'N/A',
-                        paymentMethod: order.payment_method,
-                        paymentStatus: order.payment_status,
-                        totalPrice: order.total_price,
-                        status: order.status
+                        paymentMethod: order.paymentMethod || 'cod',
+                        paymentStatus: order.paymentStatus || 'pending',
+                        totalPrice: order.totalPrice,
+                        status: order.status as string
                     }
                 });
             }
@@ -124,9 +131,7 @@ export class RouteService {
 
         if (points.length === 0) return [];
 
-        // Simple clustering/ordering by nearest neighbor starting from a central depot (e.g. Colombo)
-        // For now, let's assume driver starts at 6.9271, 79.8612 (Colombo)
-        let currentPos = { lat: 6.9271, lng: 79.8612 };
+        let currentPos = { lat: 6.9271, lng: 79.8612 }; // Colombo
         const route: Point[] = [];
         const unvisited = [...points];
 
@@ -136,17 +141,12 @@ export class RouteService {
 
             for (let i = 0; i < unvisited.length; i++) {
                 const dist = this.calculateDistance(currentPos.lat, currentPos.lng, unvisited[i].lat, unvisited[i].lng);
-                // Constraint: Must pick up before delivery? 
-                // For simplicity, we assume all pickups happen first or we don't enforce strict dependency in this simple demo version,
-                // BUT a real TSP needs to respect pickup -> delivery precedence.
-                // Let's just sort purely by distance for the demo, or prioritize pickups.
-
-                // Heuristic: If it's a delivery, check if we visited its pickup.
                 const point = unvisited[i];
                 let canVisit = true;
+
                 if (point.type === 'delivery') {
                     const pickupVisitedInRoute = route.some(p => p.type === 'pickup' && p.orderId === point.orderId);
-                    const order = orders.find(o => o.id === point.orderId);
+                    const order = orderRecords.find(o => o.id === point.orderId);
                     const isAlreadyInTransit = order?.status === 'in_transit';
 
                     if (!pickupVisitedInRoute && !isAlreadyInTransit) {
@@ -160,8 +160,6 @@ export class RouteService {
                 }
             }
 
-            // If no reachable point (e.g. only deliveries left but pickups not visited - shouldn't happen if we have pairs), 
-            // just pick nearest pickup to unblock.
             if (nearestIdx === -1) {
                 for (let i = 0; i < unvisited.length; i++) {
                     if (unvisited[i].type === 'pickup') {
@@ -180,7 +178,7 @@ export class RouteService {
                 currentPos = { lat: nextPoint.lat, lng: nextPoint.lng };
                 unvisited.splice(nearestIdx, 1);
             } else {
-                break; // Should not happen
+                break;
             }
         }
 
@@ -188,7 +186,7 @@ export class RouteService {
     }
 
     private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-        const R = 6371; // Radius of the earth in km
+        const R = 6371;
         const dLat = this.deg2rad(lat2 - lat1);
         const dLon = this.deg2rad(lon2 - lon1);
         const a =
@@ -196,8 +194,7 @@ export class RouteService {
             Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const d = R * c; // Distance in km
-        return d;
+        return R * c;
     }
 
     private deg2rad(deg: number): number {

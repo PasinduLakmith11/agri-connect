@@ -23,7 +23,12 @@ export const updateProfile = async (req: Request, res: Response) => {
         if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
 
         const updates = req.body;
-        // In real app, validate schema here or middleware
+
+        // Handle profile image upload
+        if (req.file) {
+            // Assuming static serve at /uploads
+            updates.profile_image = `/uploads/${req.file.filename}`;
+        }
 
         const updatedUser = await userService.update(req.user.userId, updates);
         res.json(updatedUser);

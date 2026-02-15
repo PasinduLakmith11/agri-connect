@@ -1,43 +1,61 @@
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../config/database';
+import { db } from '../database';
+import { users } from '../database/schema';
+import { eq, or } from 'drizzle-orm';
 import { RegisterRequest, LoginRequest, User, AuthResponse } from 'agri-connect-shared';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt';
 
 export class AuthService {
     async register(data: RegisterRequest): Promise<AuthResponse> {
-        const existingUser = db.prepare('SELECT id FROM users WHERE email = ? OR phone = ?').get(data.email, data.phone);
+        if (!db) throw new Error('Database not initialized');
 
-        if (existingUser) {
+        const existingUser = await db.select()
+            .from(users)
+            .where(
+                or(
+                    eq(users.email, data.email),
+                    eq(users.phone, data.phone)
+                )
+            )
+            .limit(1);
+
+        if (existingUser.length > 0) {
             throw new Error('User with this email or phone already exists');
         }
 
         const hashedPassword = await bcrypt.hash(data.password, 10);
         const id = uuidv4();
 
-        const insert = db.prepare(`
-      INSERT INTO users (id, email, phone, password_hash, role, full_name, address, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `);
+        await db.insert(users).values({
+            id,
+            email: data.email,
+            phone: data.phone,
+            passwordHash: hashedPassword,
+            role: data.role as any,
+            fullName: data.full_name,
+            address: data.address || null,
+        });
 
-        insert.run(id, data.email, data.phone, hashedPassword, data.role, data.full_name, data.address || null);
-
-        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+        const userRecord = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
 
         const userDto: User = {
-            id: user.id,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            full_name: user.full_name,
-            location_lat: user.location_lat,
-            location_lng: user.location_lng,
-            address: user.address,
-            rating: user.rating || 0,
-            rating_count: user.rating_count || 0,
-            verified: Boolean(user.verified),
-            created_at: user.created_at,
-            updated_at: user.updated_at
+            id: userRecord.id,
+            email: userRecord.email,
+            phone: userRecord.phone,
+            role: userRecord.role as any,
+            full_name: userRecord.fullName,
+            location_lat: userRecord.locationLat,
+            location_lng: userRecord.locationLng,
+            address: userRecord.address,
+            bio: userRecord.bio,
+            farm_name: userRecord.farmName,
+            profile_image: userRecord.profileImage,
+            rating: userRecord.rating || 0,
+            rating_count: userRecord.ratingCount || 0,
+            verified: Boolean(userRecord.verified),
+            created_at: userRecord.createdAt?.toISOString() || '',
+            updated_at: userRecord.updatedAt?.toISOString() || ''
         };
 
         const { accessToken, refreshToken } = generateTokens(userDto);
@@ -46,27 +64,31 @@ export class AuthService {
     }
 
     async login(data: LoginRequest): Promise<AuthResponse> {
-        const user = db.prepare('SELECT * FROM users WHERE email = ?').get(data.email) as any;
+        if (!db) throw new Error('Database not initialized');
 
-        if (!user || !(await bcrypt.compare(data.password, user.password_hash))) {
+        const userRecord = (await db.select().from(users).where(eq(users.email, data.email)).limit(1))[0];
+
+        if (!userRecord || !(await bcrypt.compare(data.password, userRecord.passwordHash))) {
             throw new Error('Invalid credentials');
         }
 
-        // Map to User type (exclude password)
         const userDto: User = {
-            id: user.id,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            full_name: user.full_name,
-            location_lat: user.location_lat,
-            location_lng: user.location_lng,
-            address: user.address,
-            rating: user.rating || 0,
-            rating_count: user.rating_count || 0,
-            verified: Boolean(user.verified),
-            created_at: user.created_at,
-            updated_at: user.updated_at
+            id: userRecord.id,
+            email: userRecord.email,
+            phone: userRecord.phone,
+            role: userRecord.role as any,
+            full_name: userRecord.fullName,
+            location_lat: userRecord.locationLat,
+            location_lng: userRecord.locationLng,
+            address: userRecord.address,
+            bio: userRecord.bio,
+            farm_name: userRecord.farmName,
+            profile_image: userRecord.profileImage,
+            rating: userRecord.rating || 0,
+            rating_count: userRecord.ratingCount || 0,
+            verified: Boolean(userRecord.verified),
+            created_at: userRecord.createdAt?.toISOString() || '',
+            updated_at: userRecord.updatedAt?.toISOString() || ''
         };
 
         const { accessToken, refreshToken } = generateTokens(userDto);
@@ -75,30 +97,35 @@ export class AuthService {
     }
 
     async refreshToken(token: string): Promise<{ accessToken: string; refreshToken: string }> {
+        if (!db) throw new Error('Database not initialized');
+
         const payload = verifyRefreshToken(token);
         if (!payload) {
             throw new Error('Invalid or expired refresh token');
         }
 
-        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.userId) as any;
-        if (!user) {
+        const userRecord = (await db.select().from(users).where(eq(users.id, payload.userId)).limit(1))[0];
+        if (!userRecord) {
             throw new Error('User not found');
         }
 
         const userDto: User = {
-            id: user.id,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            full_name: user.full_name,
-            location_lat: user.location_lat,
-            location_lng: user.location_lng,
-            address: user.address,
-            rating: user.rating || 0,
-            rating_count: user.rating_count || 0,
-            verified: Boolean(user.verified),
-            created_at: user.created_at,
-            updated_at: user.updated_at
+            id: userRecord.id,
+            email: userRecord.email,
+            phone: userRecord.phone,
+            role: userRecord.role as any,
+            full_name: userRecord.fullName,
+            location_lat: userRecord.locationLat,
+            location_lng: userRecord.locationLng,
+            address: userRecord.address,
+            bio: userRecord.bio,
+            farm_name: userRecord.farmName,
+            profile_image: userRecord.profileImage,
+            rating: userRecord.rating || 0,
+            rating_count: userRecord.ratingCount || 0,
+            verified: Boolean(userRecord.verified),
+            created_at: userRecord.createdAt?.toISOString() || '',
+            updated_at: userRecord.updatedAt?.toISOString() || ''
         };
 
         return generateTokens(userDto);
