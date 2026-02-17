@@ -91,12 +91,6 @@ Agri-Connect is a decentralized supply chain platform designed to eliminate the 
 
 ---
 
-## 🌍 Deployment
 
-This project is optimized for deployment on:
-- **Frontend**: [Vercel](https://vercel.com)
-- **Backend**: [Render](https://render.com) using the provided `render.yaml` blueprint.
-
----
 
 
