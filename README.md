@@ -99,6 +99,4 @@ This project is optimized for deployment on:
 
 ---
 
-<p align="center">
-  Made with ❤️ by the Agri-Connect Team
-</p>
+
