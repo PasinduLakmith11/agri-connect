@@ -1,0 +1,7 @@
+🔍 Checking database connection...
+
+✅ Testing connection...
+❌ Database check failed: Tenant or user not found
+   Error code: XX000
+
+🏁 Check complete

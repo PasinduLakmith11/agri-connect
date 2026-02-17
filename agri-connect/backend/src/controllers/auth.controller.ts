@@ -21,7 +21,7 @@ export const register = async (req: Request, res: Response) => {
         }
 
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ message: 'Validation error', errors: (error as z.ZodError).errors });
+            return res.status(400).json({ message: 'Validation error', errors: (error as any).errors });
         }
 
         // Send detailed error to client for debugging
@@ -40,7 +40,7 @@ export const login = async (req: Request, res: Response) => {
         res.json(result);
     } catch (error: any) {
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ message: 'Validation error', errors: (error as z.ZodError).errors });
+            return res.status(400).json({ message: 'Validation error', errors: (error as any).errors });
         }
         res.status(401).json({ message: error.message });
     }

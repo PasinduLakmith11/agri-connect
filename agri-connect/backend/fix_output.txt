@@ -1,0 +1,5 @@
+🔄 Attempting to apply DB permissions fix...
+❌ Failed to apply fix: Tenant or user not found
+   Code: XX000
+
+⚠️ If this failed, please run the "backend/fix_permissions.sql" script in Supabase Dashboard manually.

@@ -1,0 +1,25 @@
+🔍 Debugging User Query...
+Attempting to select user with email janith@gmail.com...
+❌ Query Failed!
+---------------------------------------------------
+Message: Failed query: select "id", "email", "phone", "password_hash", "role", "full_name", "location_lat", "location_lng", "address", "bio", "farm_name", "profile_image", "verified", "rating", "rating_count", "created_at", "updated_at" from "users" where ("users"."email" = $1 or "users"."phone" = $2) limit $3
+params: janith@gmail.com,0714563666,1
+Code: undefined
+Detail: undefined
+Hint: undefined
+Name: Error
+---------------------------------------------------
+Full Error Object: {
+  "query": "select \"id\", \"email\", \"phone\", \"password_hash\", \"role\", \"full_name\", \"location_lat\", \"location_lng\", \"address\", \"bio\", \"farm_name\", \"profile_image\", \"verified\", \"rating\", \"rating_count\", \"created_at\", \"updated_at\" from \"users\" where (\"users\".\"email\" = $1 or \"users\".\"phone\" = $2) limit $3",
+  "params": [
+    "janith@gmail.com",
+    "0714563666",
+    1
+  ],
+  "cause": {
+    "errno": -3008,
+    "code": "ENOTFOUND",
+    "syscall": "getaddrinfo",
+    "hostname": "db.aogrqxaamdbaxiiettim.supabase.co"
+  }
+}

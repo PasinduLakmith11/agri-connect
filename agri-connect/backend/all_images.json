@@ -1,0 +1,13 @@
+🖼️  Listing ALL Product Images...
+[
+  {
+    "id": "66399d0f-428d-406e-af8c-3fb8a94c26c5",
+    "name": "Papaya",
+    "images": "[\"/uploads/1771228748885-978520200.jfif\"]"
+  },
+  {
+    "id": "c73d3798-2214-4b96-908d-44432fd1c544",
+    "name": "Mango",
+    "images": "[\"/uploads/1771229448661-527604427.jfif\"]"
+  }
+]

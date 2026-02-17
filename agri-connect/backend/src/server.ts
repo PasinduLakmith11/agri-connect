@@ -77,15 +77,6 @@ app.get('/', (req, res) => {
     res.send('Agri-Connect API is running');
 });
 
-// API Status route
-app.get('/api', (req, res) => {
-    res.json({
-        status: 'online',
-        message: 'Agri-Connect API is operational',
-        timestamp: new Date().toISOString()
-    });
-});
-
 // Socket.io connection
 io.on('connection', (socket) => {
     console.log('New client connected:', socket.id);
